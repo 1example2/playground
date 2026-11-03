@@ -244,15 +244,21 @@
             }
         };
 
-        // Weapon definitions
+        // Weapon definitions with multi-language support
         const WEAPONS = {
-            pistol: { name: '手枪', damage: 15, fireRate: 300, bulletSpeed: 8, bulletSize: 4, color: '#ffff00', ammo: Infinity, spread: 0, pellets: 1, effect: 'normal' },
-            shotgun: { name: '霰弹枪', damage: 12, fireRate: 600, bulletSpeed: 7, bulletSize: 3, color: '#ff6600', ammo: 30, spread: 0.3, pellets: 5, effect: 'spread' },
-            machinegun: { name: '机枪', damage: 8, fireRate: 80, bulletSpeed: 10, bulletSize: 3, color: '#00ffff', ammo: 150, spread: 0.15, pellets: 1, effect: 'rapid' },
-            sniper: { name: '狙击枪', damage: 50, fireRate: 1000, bulletSpeed: 15, bulletSize: 6, color: '#ff00ff', ammo: 20, spread: 0, pellets: 1, effect: 'pierce' },
-            flamethrower: { name: '火焰喷射器', damage: 3, fireRate: 50, bulletSpeed: 5, bulletSize: 8, color: '#ff4400', ammo: 100, spread: 0.4, pellets: 3, effect: 'fire' },
-            laser: { name: '激光枪', damage: 25, fireRate: 400, bulletSpeed: 20, bulletSize: 4, color: '#00ff00', ammo: 50, spread: 0, pellets: 1, effect: 'laser' }
+            pistol: { name: { zh: '手枪', en: 'Pistol' }, damage: 15, fireRate: 300, bulletSpeed: 8, bulletSize: 4, color: '#ffff00', ammo: Infinity, spread: 0, pellets: 1, effect: 'normal' },
+            shotgun: { name: { zh: '霰弹枪', en: 'Shotgun' }, damage: 12, fireRate: 600, bulletSpeed: 7, bulletSize: 3, color: '#ff6600', ammo: 30, spread: 0.3, pellets: 5, effect: 'spread' },
+            machinegun: { name: { zh: '机枪', en: 'Machine Gun' }, damage: 8, fireRate: 80, bulletSpeed: 10, bulletSize: 3, color: '#00ffff', ammo: 150, spread: 0.15, pellets: 1, effect: 'rapid' },
+            sniper: { name: { zh: '狙击枪', en: 'Sniper' }, damage: 50, fireRate: 1000, bulletSpeed: 15, bulletSize: 6, color: '#ff00ff', ammo: 20, spread: 0, pellets: 1, effect: 'pierce' },
+            flamethrower: { name: { zh: '火焰喷射器', en: 'Flamethrower' }, damage: 3, fireRate: 50, bulletSpeed: 5, bulletSize: 8, color: '#ff4400', ammo: 100, spread: 0.4, pellets: 3, effect: 'fire' },
+            laser: { name: { zh: '激光枪', en: 'Laser Gun' }, damage: 25, fireRate: 400, bulletSpeed: 20, bulletSize: 4, color: '#00ff00', ammo: 50, spread: 0, pellets: 1, effect: 'laser' }
         };
+
+        // Helper to get weapon name
+        function getWeaponName(weaponKey) {
+            const weapon = WEAPONS[weaponKey];
+            return weapon.name[game.language] || weapon.name.zh;
+        }
 
         // Utility functions
         function randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
@@ -352,7 +358,7 @@
                 ctx.fillStyle = '#333'; ctx.fillRect(this.x - 12, this.y + this.bobOffset - 8, 24, 16);
                 ctx.fillStyle = this.weapon.color; ctx.fillRect(this.x - 10, this.y + this.bobOffset - 6, 20, 12);
                 ctx.fillStyle = '#fff'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
-                ctx.fillText(this.weapon.name, this.x, this.y + this.bobOffset + 25);
+                ctx.fillText(getWeaponName(this.weaponKey), this.x, this.y + this.bobOffset + 25);
             }
         }
 
@@ -775,11 +781,15 @@
                 document.getElementById('hp').textContent = '❤️'.repeat(Math.max(0, this.hp));
                 for (let i = 0; i < 5; i++) game.globalParticles.push(new Particle(this.x, this.y, '#ff0000', 5, 4, 20));
                 if (this.hp <= 0) {
-                    this.hp = this.maxHp; this.x = 100; this.y = 300;
+                    this.hp = this.maxHp;
                     // Return to start room
                     game.currentRoom = game.rooms[0];
-                    game.currentRoomCoords = { x: 0, y: 0 };
+                    game.currentRoomCoords = { x: game.rooms[0].gridX, y: game.rooms[0].gridY };
+                    // Position at start room center
+                    this.x = game.rooms[0].width / 2;
+                    this.y = game.rooms[0].height / 2;
                     document.getElementById('hp').textContent = '❤️'.repeat(this.hp);
+                    this.updateUI();
                 }
             }
 
@@ -817,7 +827,8 @@
             }
 
             checkRoomTransition() {
-                for (const door of game.currentRoom.doors) {
+                const oldRoom = game.currentRoom;
+                for (const door of oldRoom.doors) {
                     const dist = Math.hypot(this.x - door.x, this.y - door.y);
                     if (dist < 30) {
                         const targetRoom = door.targetRoom;
@@ -825,16 +836,24 @@
                         game.currentRoomCoords = { x: targetRoom.gridX, y: targetRoom.gridY };
 
                         // Position player at opposite door
+                        let positioned = false;
                         for (const returnDoor of targetRoom.doors) {
-                            if (returnDoor.targetRoom === game.rooms[game.rooms.indexOf(game.currentRoom) === 0 ? 0 : game.rooms.indexOf(game.currentRoom)]) {
+                            if (returnDoor.targetRoom === oldRoom) {
                                 switch(returnDoor.direction) {
-                                    case 'north': this.x = returnDoor.x; this.y = returnDoor.y + 50; break;
-                                    case 'south': this.x = returnDoor.x; this.y = returnDoor.y - 50; break;
-                                    case 'west': this.x = returnDoor.x + 50; this.y = returnDoor.y; break;
-                                    case 'east': this.x = returnDoor.x - 50; this.y = returnDoor.y; break;
+                                    case 'north': this.x = returnDoor.x; this.y = returnDoor.y + 60; break;
+                                    case 'south': this.x = returnDoor.x; this.y = returnDoor.y - 60; break;
+                                    case 'west': this.x = returnDoor.x + 60; this.y = returnDoor.y; break;
+                                    case 'east': this.x = returnDoor.x - 60; this.y = returnDoor.y; break;
                                 }
+                                positioned = true;
                                 break;
                             }
+                        }
+
+                        // Fallback positioning if door not found
+                        if (!positioned) {
+                            this.x = targetRoom.width / 2;
+                            this.y = targetRoom.height / 2;
                         }
 
                         // Clear bullets
@@ -852,7 +871,7 @@
 
             updateUI() {
                 document.getElementById('hp').textContent = '❤️'.repeat(Math.max(0, this.hp));
-                document.getElementById('weaponName').textContent = this.currentWeapon.name;
+                document.getElementById('weaponName').textContent = getWeaponName(this.weapons[this.currentWeaponIndex]);
                 const ammo = this.ammo[this.weapons[this.currentWeaponIndex]];
                 document.getElementById('ammo').textContent = ammo === Infinity ? '∞' : ammo;
                 document.getElementById('roomNum').textContent = game.rooms.indexOf(game.currentRoom) + 1;
