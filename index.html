@@ -88,6 +88,39 @@
             text-shadow: 2px 2px 0 #000;
             text-align: right;
         }
+        #settings {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            display: flex;
+            gap: 10px;
+        }
+        .setting-btn {
+            background: #2c3e50;
+            border: 2px solid #34495e;
+            color: #fff;
+            padding: 8px 16px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            cursor: pointer;
+            text-shadow: 1px 1px 0 #000;
+            transition: all 0.2s;
+        }
+        .setting-btn:hover {
+            background: #34495e;
+            border-color: #4a90d9;
+        }
+        /* Day/Night mode styles */
+        body.day-mode {
+            background: #87CEEB;
+        }
+        body.day-mode canvas {
+            border-color: #5a6c7d;
+        }
+        body.day-mode #minimapContainer {
+            background: #b8d4e3;
+            border-color: #5a6c7d;
+        }
     </style>
 </head>
 <body>
@@ -110,8 +143,12 @@
             </div>
         </div>
         <div id="stats">
-            <div>击杀: <span id="killCount">0</span></div>
-            <div>房间: <span id="roomNum">1</span></div>
+            <div id="killLabel">击杀: <span id="killCount">0</span></div>
+            <div id="roomLabel">房间: <span id="roomNum">1</span></div>
+        </div>
+        <div id="settings">
+            <button class="setting-btn" id="themeBtn" onclick="toggleTheme()">🌙 夜间</button>
+            <button class="setting-btn" id="langBtn" onclick="toggleLanguage()">English</button>
         </div>
     </div>
 
@@ -131,10 +168,38 @@
             GRID_SIZE: 15
         };
 
+        // Language translations
+        const TRANSLATIONS = {
+            zh: {
+                weapon: '武器',
+                ammo: '弹药',
+                kills: '击杀',
+                room: '房间',
+                minimap: '小地图',
+                roomInfo: '房间',
+                controls: 'WASD - 移动<br>鼠标 - 瞄准/射击<br>数字键 1-6 - 切换武器<br>走进武器自动拾取',
+                dayMode: '☀️ 白天',
+                nightMode: '🌙 夜间',
+                langBtn: 'English'
+            },
+            en: {
+                weapon: 'Weapon',
+                ammo: 'Ammo',
+                kills: 'Kills',
+                room: 'Room',
+                minimap: 'Minimap',
+                roomInfo: 'Room',
+                controls: 'WASD - Move<br>Mouse - Aim/Shoot<br>Keys 1-6 - Switch Weapon<br>Walk to weapon to pickup',
+                dayMode: '☀️ Day',
+                nightMode: '🌙 Night',
+                langBtn: '中文'
+            }
+        };
+
         // Game state
         const game = {
             rooms: [],
-            roomMap: new Map(), // key: "x,y", value: room
+            roomMap: new Map(),
             currentRoom: null,
             currentRoomCoords: { x: 0, y: 0 },
             player: null,
@@ -144,7 +209,39 @@
             keys: {},
             mouse: { x: 0, y: 0, down: false },
             camera: { x: 0, y: 0 },
-            dungeonBounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 }
+            dungeonBounds: { minX: 0, maxX: 0, minY: 0, maxY: 0 },
+            isDayMode: false,
+            language: 'zh'
+        };
+
+        // Theme colors
+        const THEMES = {
+            night: {
+                floor: '#2c3e50',
+                floorTile: '#34495e',
+                wall: '#1a252f',
+                wallStroke: '#34495e',
+                obstacle: '#1a252f',
+                obstacleStroke: '#34495e',
+                grid: 'rgba(52, 73, 94, 0.3)',
+                doorGlow: '#3498db',
+                minimapBg: '#0a0a15',
+                minimapRoom: '#1a1a2e',
+                minimapVisited: '#34495e'
+            },
+            day: {
+                floor: '#d4c4a8',
+                floorTile: '#c4b498',
+                wall: '#8b7355',
+                wallStroke: '#a08060',
+                obstacle: '#8b7355',
+                obstacleStroke: '#a08060',
+                grid: 'rgba(139, 115, 85, 0.3)',
+                doorGlow: '#4a90d9',
+                minimapBg: '#f5f5dc',
+                minimapRoom: '#e8dcc0',
+                minimapVisited: '#d4c4a8'
+            }
         };
 
         // Weapon definitions
@@ -884,11 +981,165 @@
             requestAnimationFrame(gameLoop);
         }
 
+        // Theme and Language functions
+        function toggleTheme() {
+            game.isDayMode = !game.isDayMode;
+            document.body.classList.toggle('day-mode', game.isDayMode);
+            const btn = document.getElementById('themeBtn');
+            const t = TRANSLATIONS[game.language];
+            btn.textContent = game.isDayMode ? t.dayMode : t.nightMode;
+        }
+
+        function toggleLanguage() {
+            game.language = game.language === 'zh' ? 'en' : 'zh';
+            updateLanguage();
+        }
+
+        function updateLanguage() {
+            const t = TRANSLATIONS[game.language];
+            document.getElementById('langBtn').textContent = t.langBtn;
+            document.getElementById('themeBtn').textContent = game.isDayMode ? t.dayMode : t.nightMode;
+            document.getElementById('minimapTitle').textContent = t.minimap;
+            document.getElementById('killLabel').innerHTML = t.kills + ': <span id="killCount">' + game.killCount + '</span>';
+            document.getElementById('roomLabel').innerHTML = t.room + ': <span id="roomNum">' + (game.rooms.indexOf(game.currentRoom) + 1) + '</span>';
+
+            // Update controls
+            const controlsDiv = document.querySelector('#ui .controls');
+            controlsDiv.innerHTML = t.controls;
+
+            // Update weapon info label
+            const weaponInfo = document.querySelector('#ui .weapon-info');
+            if (weaponInfo) {
+                weaponInfo.childNodes[0].textContent = t.weapon + ': ';
+            }
+
+            // Update ammo label
+            const ammoInfos = document.querySelectorAll('#ui .weapon-info');
+            if (ammoInfos[1]) {
+                ammoInfos[1].childNodes[0].textContent = t.ammo + ': ';
+            }
+
+            if (game.player) game.player.updateUI();
+        }
+
+        // Override Room.draw to support themes
+        const originalRoomDraw = Room.prototype.draw;
+        Room.prototype.draw = function(ctx) {
+            const theme = game.isDayMode ? THEMES.day : THEMES.night;
+
+            // Floor
+            ctx.fillStyle = theme.floor;
+            ctx.fillRect(0, 0, this.width, this.height);
+
+            // Floor tiles
+            ctx.fillStyle = theme.floorTile;
+            for (const tile of this.floorTiles) {
+                if (tile.variant === 1) ctx.fillRect(tile.x + 2, tile.y + 2, 36, 36);
+            }
+
+            // Grid
+            ctx.strokeStyle = theme.grid; ctx.lineWidth = 1;
+            for (let x = 0; x < this.width; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, this.height); ctx.stroke(); }
+            for (let y = 0; y < this.height; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(this.width, y); ctx.stroke(); }
+
+            // Obstacles
+            ctx.fillStyle = theme.obstacle; ctx.strokeStyle = theme.obstacleStroke; ctx.lineWidth = 2;
+            for (const obs of this.obstacles) {
+                ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+                ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
+            }
+
+            // Walls
+            ctx.fillStyle = theme.wall;
+            for (const wall of this.walls) ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
+            ctx.strokeStyle = theme.wallStroke; ctx.lineWidth = 2;
+            for (const wall of this.walls) ctx.strokeRect(wall.x, wall.y, wall.width, wall.height);
+
+            // Doors
+            for (const door of this.doors) {
+                ctx.fillStyle = theme.wall; ctx.fillRect(door.x - 25, door.y - 25, 50, 50);
+                ctx.fillStyle = '#000'; ctx.fillRect(door.x - 15, door.y - 15, 30, 30);
+                const grad = ctx.createRadialGradient(door.x, door.y, 0, door.x, door.y, 20);
+                grad.addColorStop(0, theme.doorGlow); grad.addColorStop(1, 'transparent');
+                ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(door.x, door.y, 20, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#fff'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
+                const arrow = door.direction === 'north' ? '↑' : door.direction === 'south' ? '↓' : door.direction === 'west' ? '←' : '→';
+                ctx.fillText(arrow, door.x, door.y + 4);
+            }
+
+            // Weapons
+            for (const weapon of this.weapons) if (!weapon.pickedUp) weapon.draw(ctx);
+        };
+
+        // Override drawMinimap to support themes
+        const originalDrawMinimap = drawMinimap;
+        drawMinimap = function() {
+            const ctx = minimapCtx;
+            const w = minimapCanvas.width, h = minimapCanvas.height;
+            const bounds = game.dungeonBounds;
+            const gridW = bounds.maxX - bounds.minX + 1;
+            const gridH = bounds.maxY - bounds.minY + 1;
+            const cellW = w / (gridW + 2);
+            const cellH = h / (gridH + 2);
+            const cellSize = Math.min(cellW, cellH);
+            const offsetX = (w - gridW * cellSize) / 2;
+            const offsetY = (h - gridH * cellSize) / 2;
+            const theme = game.isDayMode ? THEMES.day : THEMES.night;
+
+            ctx.fillStyle = theme.minimapBg; ctx.fillRect(0, 0, w, h);
+
+            for (const room of game.rooms) {
+                const mx = offsetX + (room.gridX - bounds.minX) * cellSize;
+                const my = offsetY + (room.gridY - bounds.minY) * cellSize;
+
+                if (room.visited) {
+                    ctx.fillStyle = room.type === 'boss' ? '#c0392b' : room.type === 'combat' ? '#8e44ad' : theme.minimapVisited;
+                } else {
+                    ctx.fillStyle = theme.minimapRoom;
+                }
+                ctx.fillRect(mx + 2, my + 2, cellSize - 4, cellSize - 4);
+
+                if (room === game.currentRoom) {
+                    ctx.strokeStyle = '#3498db'; ctx.lineWidth = 3;
+                    ctx.strokeRect(mx + 1, my + 1, cellSize - 2, cellSize - 2);
+                }
+
+                ctx.strokeStyle = room.visited ? '#7f8c8d' : '#2c3e50'; ctx.lineWidth = 2;
+                for (const door of room.doors) {
+                    let dx = 0, dy = 0;
+                    if (door.direction === 'north') dy = -cellSize/2;
+                    else if (door.direction === 'south') dy = cellSize/2;
+                    else if (door.direction === 'west') dx = -cellSize/2;
+                    else if (door.direction === 'east') dx = cellSize/2;
+                    ctx.beginPath();
+                    ctx.moveTo(mx + cellSize/2, my + cellSize/2);
+                    ctx.lineTo(mx + cellSize/2 + dx, my + cellSize/2 + dy);
+                    ctx.stroke();
+                }
+            }
+
+            document.getElementById('roomInfo').textContent = (game.language === 'zh' ? '房间: ' : 'Room: ') + (game.rooms.indexOf(game.currentRoom) + 1) + '/' + game.rooms.length;
+        };
+
+        // Override Player.updateUI for language
+        const originalUpdateUI = Player.prototype.updateUI;
+        Player.prototype.updateUI = function() {
+            const t = TRANSLATIONS[game.language];
+            document.getElementById('hp').textContent = '❤️'.repeat(Math.max(0, this.hp));
+            document.getElementById('weaponName').textContent = this.currentWeapon.name;
+            const ammo = this.ammo[this.weapons[this.currentWeaponIndex]];
+            document.getElementById('ammo').textContent = ammo === Infinity ? '∞' : ammo;
+            document.getElementById('roomNum').textContent = game.rooms.indexOf(game.currentRoom) + 1;
+            document.getElementById('killCount').textContent = game.killCount;
+            document.getElementById('roomInfo').textContent = (game.language === 'zh' ? '房间: ' : 'Room: ') + (game.rooms.indexOf(game.currentRoom) + 1) + '/' + game.rooms.length;
+        };
+
         // Initialize
         function init() {
             game.player = new Player();
             generateDungeon();
             game.player.updateUI();
+            updateLanguage();
         }
 
         init();
