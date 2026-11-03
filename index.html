@@ -62,6 +62,14 @@
             font-size: 14px;
             text-shadow: 2px 2px 0 #000;
         }
+        #debug {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: #888;
+            font-size: 10px;
+            pointer-events: none;
+        }
     </style>
 </head>
 <body>
@@ -80,6 +88,7 @@
         </div>
         <div id="roomIndicator">房间: <span id="roomNum">1</span>/3</div>
         <div id="score">击杀: <span id="killCount">0</span></div>
+        <div id="debug"></div>
     </div>
 
     <script>
@@ -87,18 +96,16 @@
         const ctx = canvas.getContext('2d');
         ctx.imageSmoothingEnabled = false;
 
-        // Game state
+        // Game state - each room has its own state
         const game = {
             currentRoom: 0,
             rooms: [],
             player: null,
-            bullets: [],
-            particles: [],
-            enemies: [],
-            camera: { x: 0, y: 0 },
+            globalBullets: [],
+            globalParticles: [],
+            killCount: 0,
             keys: {},
-            mouse: { x: 0, y: 0, down: false },
-            killCount: 0
+            mouse: { x: 0, y: 0, down: false }
         };
 
         // Weapon definitions - 6 different weapons
@@ -232,23 +239,20 @@
                 this.y += Math.sin(this.angle) * this.speed;
                 this.life--;
 
-                // Fire effect particles
                 if (this.effect === 'fire' && Math.random() < 0.3) {
-                    game.particles.push(new Particle(
+                    game.globalParticles.push(new Particle(
                         this.x, this.y, '#ff6600', 2, 4, 20
                     ));
                 }
 
-                // Laser effect
                 if (this.effect === 'laser' && Math.random() < 0.5) {
-                    game.particles.push(new Particle(
+                    game.globalParticles.push(new Particle(
                         this.x, this.y, '#00ff88', 1, 3, 15
                     ));
                 }
             }
 
             draw(ctx) {
-                // Draw trail
                 if (this.effect !== 'laser') {
                     ctx.strokeStyle = this.color;
                     ctx.lineWidth = this.size / 2;
@@ -263,7 +267,6 @@
                     ctx.globalAlpha = 1;
                 }
 
-                // Draw bullet
                 ctx.fillStyle = this.color;
                 ctx.shadowBlur = 10;
                 ctx.shadowColor = this.color;
@@ -272,7 +275,6 @@
                 ctx.fill();
                 ctx.shadowBlur = 0;
 
-                // Laser beam effect
                 if (this.effect === 'laser') {
                     ctx.strokeStyle = this.color;
                     ctx.lineWidth = 2;
@@ -307,7 +309,6 @@
                 if (this.pickedUp) return;
                 const glowSize = 15 + Math.sin(this.glowPhase) * 5;
 
-                // Glow effect
                 const gradient = ctx.createRadialGradient(
                     this.x, this.y + this.bobOffset, 0,
                     this.x, this.y + this.bobOffset, glowSize
@@ -319,13 +320,11 @@
                 ctx.arc(this.x, this.y + this.bobOffset, glowSize, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Weapon icon
                 ctx.fillStyle = '#333';
                 ctx.fillRect(this.x - 12, this.y + this.bobOffset - 8, 24, 16);
                 ctx.fillStyle = this.weapon.color;
                 ctx.fillRect(this.x - 10, this.y + this.bobOffset - 6, 20, 12);
 
-                // Label
                 ctx.fillStyle = '#fff';
                 ctx.font = '10px monospace';
                 ctx.textAlign = 'center';
@@ -349,34 +348,30 @@
                 this.damage = type === 'boss' ? 2 : 1;
                 this.hitFlash = 0;
                 this.dead = false;
+                this.id = Math.random().toString(36).substr(2, 9);
             }
 
             update() {
                 if (this.dead) return;
 
-                // Move towards player
                 const dx = game.player.x - this.x;
                 const dy = game.player.y - this.y;
                 const dist = Math.hypot(dx, dy);
                 this.angle = Math.atan2(dy, dx);
 
-                // Keep some distance
                 const targetDist = this.type === 'boss' ? 150 : 100;
                 if (dist > targetDist) {
                     this.x += (dx / dist) * this.speed;
                     this.y += (dy / dist) * this.speed;
                 } else if (dist < 50) {
-                    // Too close, back away
                     this.x -= (dx / dist) * this.speed;
                     this.y -= (dy / dist) * this.speed;
                 }
 
-                // Clamp to room bounds
                 const room = game.rooms[game.currentRoom];
                 this.x = Math.max(this.radius, Math.min(room.width - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(room.height - this.radius, this.y));
 
-                // Shoot at player
                 if (Date.now() - this.lastShot > this.fireRate && dist < 400) {
                     this.shoot();
                 }
@@ -393,7 +388,7 @@
                     { bulletSpeed: 5, damage: this.damage, bulletSize: 4, color: '#ff0000', effect: 'normal' },
                     true
                 );
-                game.bullets.push(bullet);
+                game.globalBullets.push(bullet);
             }
 
             takeDamage(damage) {
@@ -403,9 +398,8 @@
                     this.dead = true;
                     game.killCount++;
                     document.getElementById('killCount').textContent = game.killCount;
-                    // Death particles
                     for (let i = 0; i < 10; i++) {
-                        game.particles.push(new Particle(
+                        game.globalParticles.push(new Particle(
                             this.x, this.y,
                             this.type === 'boss' ? '#ff00ff' : '#ff0000',
                             5, 6, 30
@@ -417,13 +411,11 @@
             draw(ctx) {
                 if (this.dead) return;
 
-                // Shadow
                 ctx.fillStyle = 'rgba(0,0,0,0.3)';
                 ctx.beginPath();
                 ctx.ellipse(this.x, this.y + 8, this.radius, this.radius * 0.5, 0, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Body
                 if (this.hitFlash > 0) {
                     ctx.fillStyle = '#fff';
                 } else {
@@ -439,14 +431,12 @@
                 ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Enemy detail
                 ctx.strokeStyle = '#000';
                 ctx.lineWidth = 2;
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, this.radius - 3, 0, Math.PI * 2);
                 ctx.stroke();
 
-                // Eyes (angry)
                 ctx.fillStyle = '#fff';
                 ctx.beginPath();
                 ctx.arc(this.x - 5, this.y - 3, 3, 0, Math.PI * 2);
@@ -459,7 +449,6 @@
                 ctx.arc(this.x + 5, this.y - 3, 1.5, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Health bar
                 const barWidth = 30;
                 const barHeight = 4;
                 ctx.fillStyle = '#000';
@@ -501,7 +490,6 @@
                 if (game.keys['a'] || game.keys['A']) dx -= 1;
                 if (game.keys['d'] || game.keys['D']) dx += 1;
 
-                // Normalize diagonal movement
                 if (dx !== 0 && dy !== 0) {
                     dx *= 0.707;
                     dy *= 0.707;
@@ -510,7 +498,6 @@
                 this.x += dx * this.speed;
                 this.y += dy * this.speed;
 
-                // Clamp to room bounds
                 const room = game.rooms[game.currentRoom];
                 this.x = Math.max(this.radius, Math.min(room.width - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(room.height - this.radius, this.y));
@@ -526,15 +513,14 @@
                     this.shoot();
                 }
 
-                // Recoil recovery
                 if (this.recoil > 0) this.recoil *= 0.9;
                 if (this.muzzleFlash > 0) this.muzzleFlash--;
                 if (this.invulnerable > 0) this.invulnerable--;
 
-                // Check weapon pickup in current room only
-                const currentRoomData = game.rooms[game.currentRoom];
-                for (let i = currentRoomData.weapons.length - 1; i >= 0; i--) {
-                    const pickup = currentRoomData.weapons[i];
+                // Check weapon pickup - only in current room
+                const currentRoom = game.rooms[game.currentRoom];
+                for (let i = currentRoom.weapons.length - 1; i >= 0; i--) {
+                    const pickup = currentRoom.weapons[i];
                     if (pickup.pickedUp) continue;
                     const dist = Math.hypot(this.x - pickup.x, this.y - pickup.y);
                     if (dist < this.radius + 20) {
@@ -544,19 +530,20 @@
                 }
 
                 // Check enemy bullet collision
-                for (let i = game.bullets.length - 1; i >= 0; i--) {
-                    const bullet = game.bullets[i];
+                for (let i = game.globalBullets.length - 1; i >= 0; i--) {
+                    const bullet = game.globalBullets[i];
                     if (bullet.isEnemy) {
                         const dist = Math.hypot(this.x - bullet.x, this.y - bullet.y);
                         if (dist < this.radius + bullet.size && this.invulnerable === 0) {
                             this.takeDamage(1);
-                            game.bullets.splice(i, 1);
+                            game.globalBullets.splice(i, 1);
                         }
                     }
                 }
 
                 // Check enemy collision
-                for (const enemy of game.enemies) {
+                const currentEnemies = game.rooms[game.currentRoom].enemies;
+                for (const enemy of currentEnemies) {
                     if (enemy.dead) continue;
                     const dist = Math.hypot(this.x - enemy.x, this.y - enemy.y);
                     if (dist < this.radius + enemy.radius && this.invulnerable === 0) {
@@ -570,18 +557,16 @@
 
             takeDamage(damage) {
                 this.hp -= damage;
-                this.invulnerable = 60; // 1 second at 60fps
+                this.invulnerable = 60;
                 document.getElementById('hp').textContent = '❤️'.repeat(Math.max(0, this.hp));
 
-                // Damage particles
                 for (let i = 0; i < 5; i++) {
-                    game.particles.push(new Particle(
+                    game.globalParticles.push(new Particle(
                         this.x, this.y, '#ff0000', 5, 4, 20
                     ));
                 }
 
                 if (this.hp <= 0) {
-                    // Respawn
                     this.hp = this.maxHp;
                     this.x = 100;
                     this.y = 300;
@@ -600,12 +585,10 @@
                 this.recoil = weapon.effect === 'shotgun' ? 8 : 3;
                 this.muzzleFlash = 5;
 
-                // Consume ammo
                 if (weapon.ammo !== Infinity) {
                     this.ammo[this.weapons[this.currentWeaponIndex]]--;
                 }
 
-                // Create bullets
                 for (let i = 0; i < weapon.pellets; i++) {
                     const spread = (Math.random() - 0.5) * weapon.spread;
                     const bullet = new Bullet(
@@ -614,12 +597,11 @@
                         this.angle + spread,
                         weapon
                     );
-                    game.bullets.push(bullet);
+                    game.globalBullets.push(bullet);
                 }
 
-                // Muzzle flash particles
                 for (let i = 0; i < 5; i++) {
-                    game.particles.push(new Particle(
+                    game.globalParticles.push(new Particle(
                         this.x + Math.cos(this.angle) * 18,
                         this.y + Math.sin(this.angle) * 18,
                         weapon.color,
@@ -629,7 +611,6 @@
                     ));
                 }
 
-                // Shell casing particles
                 for (let i = 0; i < 2; i++) {
                     const shellAngle = this.angle + (Math.random() - 0.5) * 2 + Math.PI / 2;
                     const shell = new Particle(
@@ -642,7 +623,7 @@
                     );
                     shell.vx = Math.cos(shellAngle) * 3;
                     shell.vy = Math.sin(shellAngle) * 3;
-                    game.particles.push(shell);
+                    game.globalParticles.push(shell);
                 }
             }
 
@@ -667,7 +648,6 @@
             checkRoomTransition() {
                 const room = game.rooms[game.currentRoom];
 
-                // Check doors
                 for (const door of room.doors) {
                     const dist = Math.hypot(this.x - door.x, this.y - door.y);
                     if (dist < 30) {
@@ -685,9 +665,9 @@
                         }
 
                         // Clear bullets when changing rooms
-                        game.bullets = [];
+                        game.globalBullets = [];
 
-                        // Spawn enemies for new room if not already spawned
+                        // Spawn enemies for new room if first visit
                         this.spawnRoomEnemies(game.currentRoom);
 
                         this.updateUI();
@@ -697,28 +677,23 @@
             }
 
             spawnRoomEnemies(roomIndex) {
-                // Clear existing enemies
-                game.enemies = [];
-
                 const room = game.rooms[roomIndex];
+
+                // Only spawn if not already spawned
                 if (room.enemiesSpawned) return;
                 room.enemiesSpawned = true;
 
-                // Spawn enemies based on room
                 if (roomIndex === 0) {
-                    // Room 1: 2 basic enemies
-                    game.enemies.push(new Enemy(600, 200, 'basic'));
-                    game.enemies.push(new Enemy(600, 400, 'basic'));
+                    room.enemies.push(new Enemy(600, 200, 'basic'));
+                    room.enemies.push(new Enemy(600, 400, 'basic'));
                 } else if (roomIndex === 1) {
-                    // Room 2: Mix of enemies
-                    game.enemies.push(new Enemy(500, 150, 'fast'));
-                    game.enemies.push(new Enemy(700, 300, 'tank'));
-                    game.enemies.push(new Enemy(500, 450, 'basic'));
+                    room.enemies.push(new Enemy(500, 150, 'fast'));
+                    room.enemies.push(new Enemy(700, 300, 'tank'));
+                    room.enemies.push(new Enemy(500, 450, 'basic'));
                 } else if (roomIndex === 2) {
-                    // Room 3: Boss + minions
-                    game.enemies.push(new Enemy(600, 300, 'boss'));
-                    game.enemies.push(new Enemy(500, 200, 'basic'));
-                    game.enemies.push(new Enemy(500, 400, 'basic'));
+                    room.enemies.push(new Enemy(600, 300, 'boss'));
+                    room.enemies.push(new Enemy(500, 200, 'basic'));
+                    room.enemies.push(new Enemy(500, 400, 'basic'));
                 }
             }
 
@@ -731,28 +706,23 @@
             }
 
             draw(ctx) {
-                // Invulnerability flash
                 if (this.invulnerable > 0 && Math.floor(this.invulnerable / 5) % 2 === 0) {
                     ctx.globalAlpha = 0.5;
                 }
 
-                // Shadow
                 ctx.fillStyle = 'rgba(0,0,0,0.3)';
                 ctx.beginPath();
                 ctx.ellipse(this.x, this.y + 8, this.radius, this.radius * 0.5, 0, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Body
                 ctx.fillStyle = '#4a90d9';
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Headband
                 ctx.fillStyle = '#e74c3c';
                 ctx.fillRect(this.x - this.radius, this.y - 4, this.radius * 2, 4);
 
-                // Gun with recoil
                 const gunLength = 18 - this.recoil;
                 const gunX = this.x + Math.cos(this.angle) * gunLength;
                 const gunY = this.y + Math.sin(this.angle) * gunLength;
@@ -764,7 +734,6 @@
                 ctx.lineTo(gunX, gunY);
                 ctx.stroke();
 
-                // Gun detail
                 ctx.strokeStyle = this.currentWeapon.color;
                 ctx.lineWidth = 2;
                 ctx.beginPath();
@@ -772,7 +741,6 @@
                 ctx.lineTo(gunX - 2, gunY - 2);
                 ctx.stroke();
 
-                // Muzzle flash
                 if (this.muzzleFlash > 0) {
                     ctx.fillStyle = '#ffff00';
                     ctx.globalAlpha = this.muzzleFlash / 5;
@@ -782,7 +750,6 @@
                     ctx.globalAlpha = this.invulnerable > 0 ? 0.5 : 1;
                 }
 
-                // Eyes
                 const eyeOffset = Math.PI / 6;
                 ctx.fillStyle = '#fff';
                 ctx.beginPath();
@@ -798,7 +765,6 @@
                 );
                 ctx.fill();
 
-                // Pupils
                 ctx.fillStyle = '#000';
                 ctx.beginPath();
                 ctx.arc(
@@ -827,13 +793,13 @@
                 this.doors = [];
                 this.walls = [];
                 this.floorTiles = [];
-                this.weapons = []; // Weapons specific to this room
+                this.weapons = [];
+                this.enemies = [];
                 this.enemiesSpawned = false;
                 this.generate();
             }
 
             generate() {
-                // Generate floor tiles
                 const tileSize = 40;
                 for (let x = 0; x < this.width; x += tileSize) {
                     for (let y = 0; y < this.height; y += tileSize) {
@@ -844,15 +810,10 @@
                     }
                 }
 
-                // Generate walls (borders)
                 const wallThickness = 20;
-                // Top
                 this.walls.push({ x: 0, y: 0, width: this.width, height: wallThickness });
-                // Bottom
                 this.walls.push({ x: 0, y: this.height - wallThickness, width: this.width, height: wallThickness });
-                // Left
                 this.walls.push({ x: 0, y: 0, width: wallThickness, height: this.height });
-                // Right
                 this.walls.push({ x: this.width - wallThickness, y: 0, width: wallThickness, height: this.height });
             }
 
@@ -865,11 +826,9 @@
             }
 
             draw(ctx) {
-                // Floor
                 ctx.fillStyle = '#2c3e50';
                 ctx.fillRect(0, 0, this.width, this.height);
 
-                // Floor tiles pattern
                 ctx.fillStyle = '#34495e';
                 for (const tile of this.floorTiles) {
                     if (tile.variant === 1) {
@@ -877,7 +836,6 @@
                     }
                 }
 
-                // Grid lines
                 ctx.strokeStyle = 'rgba(52, 73, 94, 0.3)';
                 ctx.lineWidth = 1;
                 for (let x = 0; x < this.width; x += 40) {
@@ -893,30 +851,23 @@
                     ctx.stroke();
                 }
 
-                // Walls
                 ctx.fillStyle = '#1a252f';
                 for (const wall of this.walls) {
                     ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
                 }
 
-                // Wall highlights
                 ctx.strokeStyle = '#34495e';
                 ctx.lineWidth = 2;
                 for (const wall of this.walls) {
                     ctx.strokeRect(wall.x, wall.y, wall.width, wall.height);
                 }
 
-                // Doors
                 for (const door of this.doors) {
-                    // Door frame
                     ctx.fillStyle = '#1a252f';
                     ctx.fillRect(door.x - 25, door.y - 25, 50, 50);
-
-                    // Door opening
                     ctx.fillStyle = '#000';
                     ctx.fillRect(door.x - 15, door.y - 15, 30, 30);
 
-                    // Door glow
                     const gradient = ctx.createRadialGradient(door.x, door.y, 0, door.x, door.y, 20);
                     gradient.addColorStop(0, '#3498db');
                     gradient.addColorStop(1, 'transparent');
@@ -925,14 +876,12 @@
                     ctx.arc(door.x, door.y, 20, 0, Math.PI * 2);
                     ctx.fill();
 
-                    // Arrow indicator
                     ctx.fillStyle = '#fff';
                     ctx.font = '12px monospace';
                     ctx.textAlign = 'center';
                     ctx.fillText('→', door.x, door.y + 4);
                 }
 
-                // Draw weapons for this room
                 for (const weapon of this.weapons) {
                     if (!weapon.pickedUp) {
                         weapon.draw(ctx);
@@ -943,23 +892,19 @@
 
         // Initialize game
         function init() {
-            // Create rooms with indices
             const room1 = new Room(800, 600, 'start', 0);
             const room2 = new Room(800, 600, 'combat', 1);
             const room3 = new Room(800, 600, 'boss', 2);
 
-            // Connect rooms with doors
-            room1.addDoor(780, 300, 1); // Door to room 2
-            room2.addDoor(20, 300, 0);  // Door back to room 1
-            room2.addDoor(780, 300, 2); // Door to room 3
-            room3.addDoor(20, 300, 1);  // Door back to room 2
+            room1.addDoor(780, 300, 1);
+            room2.addDoor(20, 300, 0);
+            room2.addDoor(780, 300, 2);
+            room3.addDoor(20, 300, 1);
 
             game.rooms = [room1, room2, room3];
 
-            // Create player
             game.player = new Player(100, 300);
 
-            // Place weapons in rooms - 2 weapons per room
             // Room 1: Shotgun and Machinegun
             room1.addWeapon(400, 200, 'shotgun');
             room1.addWeapon(400, 400, 'machinegun');
@@ -968,9 +913,9 @@
             room2.addWeapon(400, 150, 'sniper');
             room2.addWeapon(400, 450, 'flamethrower');
 
-            // Room 3: Laser (and one extra - let's put shotgun ammo or another weapon)
-            room3.addWeapon(300, 300, 'laser');
-            room3.addWeapon(500, 300, 'shotgun'); // Extra ammo pickup
+            // Room 3: Laser and extra shotgun ammo
+            room3.addWeapon(400, 200, 'laser');
+            room3.addWeapon(400, 400, 'shotgun');
 
             // Spawn initial room enemies
             game.player.spawnRoomEnemies(0);
@@ -982,7 +927,6 @@
         window.addEventListener('keydown', (e) => {
             game.keys[e.key] = true;
 
-            // Weapon switching with number keys
             if (e.key >= '1' && e.key <= '6') {
                 const index = parseInt(e.key) - 1;
                 game.player.switchWeapon(index);
@@ -994,7 +938,6 @@
         });
 
         canvas.addEventListener('mousemove', (e) => {
-            const rect = canvas.getBoundingClientRect();
             game.mouse.x = e.clientX;
             game.mouse.y = e.clientY;
         });
@@ -1011,24 +954,26 @@
         function update() {
             game.player.update();
 
-            // Update enemies
-            for (let i = game.enemies.length - 1; i >= 0; i--) {
-                const enemy = game.enemies[i];
+            const currentRoom = game.rooms[game.currentRoom];
+
+            // Update enemies in current room only
+            for (let i = currentRoom.enemies.length - 1; i >= 0; i--) {
+                const enemy = currentRoom.enemies[i];
                 enemy.update();
 
                 if (enemy.dead) {
-                    game.enemies.splice(i, 1);
+                    currentRoom.enemies.splice(i, 1);
                 }
             }
 
             // Update bullets
-            for (let i = game.bullets.length - 1; i >= 0; i--) {
-                const bullet = game.bullets[i];
+            for (let i = game.globalBullets.length - 1; i >= 0; i--) {
+                const bullet = game.globalBullets[i];
                 bullet.update();
 
                 // Check bullet-enemy collision (player bullets)
                 if (!bullet.isEnemy) {
-                    for (const enemy of game.enemies) {
+                    for (const enemy of currentRoom.enemies) {
                         if (enemy.dead) continue;
                         const dist = Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y);
                         if (dist < enemy.radius + bullet.size) {
@@ -1041,52 +986,47 @@
 
                 // Remove dead bullets
                 if (bullet.life <= 0 ||
-                    bullet.x < 0 || bullet.x > game.rooms[game.currentRoom].width ||
-                    bullet.y < 0 || bullet.y > game.rooms[game.currentRoom].height) {
-                    game.bullets.splice(i, 1);
+                    bullet.x < 0 || bullet.x > currentRoom.width ||
+                    bullet.y < 0 || bullet.y > currentRoom.height) {
+                    game.globalBullets.splice(i, 1);
                 }
             }
 
             // Update particles
-            for (let i = game.particles.length - 1; i >= 0; i--) {
-                const particle = game.particles[i];
+            for (let i = game.globalParticles.length - 1; i >= 0; i--) {
+                const particle = game.globalParticles[i];
                 particle.update();
                 if (particle.life <= 0) {
-                    game.particles.splice(i, 1);
+                    game.globalParticles.splice(i, 1);
                 }
             }
 
             // Update weapons in current room
-            const currentRoom = game.rooms[game.currentRoom];
             for (const weapon of currentRoom.weapons) {
                 weapon.update();
             }
         }
 
         function draw() {
-            // Clear canvas
             ctx.fillStyle = '#000';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Draw current room
-            game.rooms[game.currentRoom].draw(ctx);
+            const currentRoom = game.rooms[game.currentRoom];
 
-            // Draw particles (behind player and enemies)
-            for (const particle of game.particles) {
+            currentRoom.draw(ctx);
+
+            for (const particle of game.globalParticles) {
                 particle.draw(ctx);
             }
 
-            // Draw bullets
-            for (const bullet of game.bullets) {
+            for (const bullet of game.globalBullets) {
                 bullet.draw(ctx);
             }
 
-            // Draw enemies
-            for (const enemy of game.enemies) {
+            for (const enemy of currentRoom.enemies) {
                 enemy.draw(ctx);
             }
 
-            // Draw player
             game.player.draw(ctx);
         }
 
