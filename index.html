@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enter the Gungeon Clone</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+        }
+        #gameContainer {
+            position: relative;
+            box-shadow: 0 0 50px rgba(0,0,0,0.8);
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #fff;
+            font-size: 14px;
+            text-shadow: 2px 2px 0 #000;
+            pointer-events: none;
+        }
+        #ui .weapon-info {
+            margin-top: 10px;
+            color: #ffd700;
+        }
+        #ui .controls {
+            margin-top: 10px;
+            color: #aaa;
+            font-size: 12px;
+        }
+        #roomIndicator {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: #fff;
+            font-size: 16px;
+            text-shadow: 2px 2px 0 #000;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="ui">
+            <div>HP: <span id="hp">❤️❤️❤️</span></div>
+            <div class="weapon-info">武器: <span id="weaponName">手枪</span></div>
+            <div class="weapon-info">弹药: <span id="ammo">∞</span></div>
+            <div class="controls">
+                WASD - 移动<br>
+                鼠标 - 瞄准/射击<br>
+                数字键 1-6 - 切换武器<br>
+                走进武器自动拾取
+            </div>
+        </div>
+        <div id="roomIndicator">房间: <span id="roomNum">1</span>/3</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+
+        // Game state
+        const game = {
+            currentRoom: 0,
+            rooms: [],
+            player: null,
+            bullets: [],
+            particles: [],
+            weapons: [],
+            enemies: [],
+            camera: { x: 0, y: 0 },
+            keys: {},
+            mouse: { x: 0, y: 0, down: false }
+        };
+
+        // Weapon definitions - 6 different weapons
+        const WEAPONS = {
+            pistol: {
+                name: '手枪',
+                damage: 15,
+                fireRate: 300,
+                bulletSpeed: 8,
+                bulletSize: 4,
+                color: '#ffff00',
+                ammo: Infinity,
+                spread: 0,
+                pellets: 1,
+                effect: 'normal'
+            },
+            shotgun: {
+                name: '霰弹枪',
+                damage: 12,
+                fireRate: 600,
+                bulletSpeed: 7,
+                bulletSize: 3,
+                color: '#ff6600',
+                ammo: 30,
+                spread: 0.3,
+                pellets: 5,
+                effect: 'spread'
+            },
+            machinegun: {
+                name: '机枪',
+                damage: 8,
+                fireRate: 80,
+                bulletSpeed: 10,
+                bulletSize: 3,
+                color: '#00ffff',
+                ammo: 150,
+                spread: 0.15,
+                pellets: 1,
+                effect: 'rapid'
+            },
+            sniper: {
+                name: '狙击枪',
+                damage: 50,
+                fireRate: 1000,
+                bulletSpeed: 15,
+                bulletSize: 6,
+                color: '#ff00ff',
+                ammo: 20,
+                spread: 0,
+                pellets: 1,
+                effect: 'pierce'
+            },
+            flamethrower: {
+                name: '火焰喷射器',
+                damage: 3,
+                fireRate: 50,
+                bulletSpeed: 5,
+                bulletSize: 8,
+                color: '#ff4400',
+                ammo: 100,
+                spread: 0.4,
+                pellets: 3,
+                effect: 'fire'
+            },
+            laser: {
+                name: '激光枪',
+                damage: 25,
+                fireRate: 400,
+                bulletSpeed: 20,
+                bulletSize: 4,
+                color: '#00ff00',
+                ammo: 50,
+                spread: 0,
+                pellets: 1,
+                effect: 'laser'
+            }
+        };
+
+        // Particle class for effects
+        class Particle {
+            constructor(x, y, color, speed, size, life) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.vx = (Math.random() - 0.5) * speed;
+                this.vy = (Math.random() - 0.5) * speed;
+                this.size = size;
+                this.life = life;
+                this.maxLife = life;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life--;
+                this.size *= 0.95;
+            }
+
+            draw(ctx) {
+                const alpha = this.life / this.maxLife;
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        // Bullet class
+        class Bullet {
+            constructor(x, y, angle, weapon) {
+                this.x = x;
+                this.y = y;
+                this.angle = angle;
+                this.speed = weapon.bulletSpeed;
+                this.damage = weapon.damage;
+                this.size = weapon.bulletSize;
+                this.color = weapon.color;
+                this.effect = weapon.effect;
+                this.life = 100;
+                this.trail = [];
+            }
+
+            update() {
+                this.trail.push({ x: this.x, y: this.y });
+                if (this.trail.length > 5) this.trail.shift();
+
+                this.x += Math.cos(this.angle) * this.speed;
+                this.y += Math.sin(this.angle) * this.speed;
+                this.life--;
+
+                // Fire effect particles
+                if (this.effect === 'fire' && Math.random() < 0.3) {
+                    game.particles.push(new Particle(
+                        this.x, this.y, '#ff6600', 2, 4, 20
+                    ));
+                }
+
+                // Laser effect
+                if (this.effect === 'laser' && Math.random() < 0.5) {
+                    game.particles.push(new Particle(
+                        this.x, this.y, '#00ff88', 1, 3, 15
+                    ));
+                }
+            }
+
+            draw(ctx) {
+                // Draw trail
+                if (this.effect !== 'laser') {
+                    ctx.strokeStyle = this.color;
+                    ctx.lineWidth = this.size / 2;
+                    ctx.globalAlpha = 0.3;
+                    ctx.beginPath();
+                    for (let i = 0; i < this.trail.length; i++) {
+                        const point = this.trail[i];
+                        if (i === 0) ctx.moveTo(point.x, point.y);
+                        else ctx.lineTo(point.x, point.y);
+                    }
+                    ctx.stroke();
+                    ctx.globalAlpha = 1;
+                }
+
+                // Draw bullet
+                ctx.fillStyle = this.color;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                // Laser beam effect
+                if (this.effect === 'laser') {
+                    ctx.strokeStyle = this.color;
+                    ctx.lineWidth = 2;
+                    ctx.globalAlpha = 0.5;
+                    ctx.beginPath();
+                    ctx.moveTo(this.x - Math.cos(this.angle) * 20, this.y - Math.sin(this.angle) * 20);
+                    ctx.lineTo(this.x + Math.cos(this.angle) * 10, this.y + Math.sin(this.angle) * 10);
+                    ctx.stroke();
+                    ctx.globalAlpha = 1;
+                }
+            }
+        }
+
+        // Weapon pickup class
+        class WeaponPickup {
+            constructor(x, y, weaponKey) {
+                this.x = x;
+                this.y = y;
+                this.weaponKey = weaponKey;
+                this.weapon = WEAPONS[weaponKey];
+                this.bobOffset = 0;
+                this.glowPhase = 0;
+            }
+
+            update() {
+                this.bobOffset = Math.sin(Date.now() / 300) * 5;
+                this.glowPhase += 0.1;
+            }
+
+            draw(ctx) {
+                const glowSize = 15 + Math.sin(this.glowPhase) * 5;
+
+                // Glow effect
+                const gradient = ctx.createRadialGradient(
+                    this.x, this.y + this.bobOffset, 0,
+                    this.x, this.y + this.bobOffset, glowSize
+                );
+                gradient.addColorStop(0, this.weapon.color);
+                gradient.addColorStop(1, 'transparent');
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y + this.bobOffset, glowSize, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Weapon icon
+                ctx.fillStyle = '#333';
+                ctx.fillRect(this.x - 12, this.y + this.bobOffset - 8, 24, 16);
+                ctx.fillStyle = this.weapon.color;
+                ctx.fillRect(this.x - 10, this.y + this.bobOffset - 6, 20, 12);
+
+                // Label
+                ctx.fillStyle = '#fff';
+                ctx.font = '10px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(this.weapon.name, this.x, this.y + this.bobOffset + 25);
+            }
+        }
+
+        // Player class
+        class Player {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 12;
+                this.speed = 4;
+                this.hp = 3;
+                this.maxHp = 3;
+                this.angle = 0;
+                this.weapons = ['pistol'];
+                this.currentWeaponIndex = 0;
+                this.ammo = { pistol: Infinity };
+                this.lastShot = 0;
+                this.recoil = 0;
+                this.muzzleFlash = 0;
+            }
+
+            get currentWeapon() {
+                return WEAPONS[this.weapons[this.currentWeaponIndex]];
+            }
+
+            update() {
+                // Movement
+                let dx = 0;
+                let dy = 0;
+                if (game.keys['w'] || game.keys['W']) dy -= 1;
+                if (game.keys['s'] || game.keys['S']) dy += 1;
+                if (game.keys['a'] || game.keys['A']) dx -= 1;
+                if (game.keys['d'] || game.keys['D']) dx += 1;
+
+                // Normalize diagonal movement
+                if (dx !== 0 && dy !== 0) {
+                    dx *= 0.707;
+                    dy *= 0.707;
+                }
+
+                this.x += dx * this.speed;
+                this.y += dy * this.speed;
+
+                // Clamp to room bounds
+                const room = game.rooms[game.currentRoom];
+                this.x = Math.max(this.radius, Math.min(room.width - this.radius, this.x));
+                this.y = Math.max(this.radius, Math.min(room.height - this.radius, this.y));
+
+                // Aiming
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = game.mouse.x - rect.left;
+                const mouseY = game.mouse.y - rect.top;
+                this.angle = Math.atan2(mouseY - this.y, mouseX - this.x);
+
+                // Shooting
+                if (game.mouse.down && Date.now() - this.lastShot > this.currentWeapon.fireRate) {
+                    this.shoot();
+                }
+
+                // Recoil recovery
+                if (this.recoil > 0) this.recoil *= 0.9;
+                if (this.muzzleFlash > 0) this.muzzleFlash--;
+
+                // Check weapon pickup
+                for (let i = game.weapons.length - 1; i >= 0; i--) {
+                    const pickup = game.weapons[i];
+                    const dist = Math.hypot(this.x - pickup.x, this.y - pickup.y);
+                    if (dist < this.radius + 20) {
+                        this.pickupWeapon(pickup.weaponKey);
+                        game.weapons.splice(i, 1);
+                    }
+                }
+
+                // Room transition
+                this.checkRoomTransition();
+            }
+
+            shoot() {
+                const weapon = this.currentWeapon;
+                if (this.ammo[this.weapons[this.currentWeaponIndex]] <= 0 && weapon.ammo !== Infinity) {
+                    return;
+                }
+
+                this.lastShot = Date.now();
+                this.recoil = weapon.effect === 'shotgun' ? 8 : 3;
+                this.muzzleFlash = 5;
+
+                // Consume ammo
+                if (weapon.ammo !== Infinity) {
+                    this.ammo[this.weapons[this.currentWeaponIndex]]--;
+                }
+
+                // Create bullets
+                for (let i = 0; i < weapon.pellets; i++) {
+                    const spread = (Math.random() - 0.5) * weapon.spread;
+                    const bullet = new Bullet(
+                        this.x + Math.cos(this.angle) * 20,
+                        this.y + Math.sin(this.angle) * 20,
+                        this.angle + spread,
+                        weapon
+                    );
+                    game.bullets.push(bullet);
+                }
+
+                // Muzzle flash particles
+                for (let i = 0; i < 5; i++) {
+                    game.particles.push(new Particle(
+                        this.x + Math.cos(this.angle) * 18,
+                        this.y + Math.sin(this.angle) * 18,
+                        weapon.color,
+                        5,
+                        3,
+                        10
+                    ));
+                }
+
+                // Shell casing particles
+                for (let i = 0; i < 2; i++) {
+                    const shellAngle = this.angle + (Math.random() - 0.5) * 2 + Math.PI / 2;
+                    const shell = new Particle(
+                        this.x + Math.cos(this.angle) * 15,
+                        this.y + Math.sin(this.angle) * 15,
+                        '#ffcc00',
+                        3,
+                        2,
+                        30
+                    );
+                    shell.vx = Math.cos(shellAngle) * 3;
+                    shell.vy = Math.sin(shellAngle) * 3;
+                    game.particles.push(shell);
+                }
+            }
+
+            pickupWeapon(weaponKey) {
+                if (!this.weapons.includes(weaponKey)) {
+                    this.weapons.push(weaponKey);
+                    this.ammo[weaponKey] = WEAPONS[weaponKey].ammo;
+                } else {
+                    this.ammo[weaponKey] = WEAPONS[weaponKey].ammo;
+                }
+                this.currentWeaponIndex = this.weapons.indexOf(weaponKey);
+                this.updateUI();
+            }
+
+            switchWeapon(index) {
+                if (index >= 0 && index < this.weapons.length) {
+                    this.currentWeaponIndex = index;
+                    this.updateUI();
+                }
+            }
+
+            checkRoomTransition() {
+                const room = game.rooms[game.currentRoom];
+
+                // Check doors
+                for (const door of room.doors) {
+                    const dist = Math.hypot(this.x - door.x, this.y - door.y);
+                    if (dist < 30) {
+                        game.currentRoom = door.targetRoom;
+                        // Position player at opposite door
+                        const newRoom = game.rooms[door.targetRoom];
+                        for (const newDoor of newRoom.doors) {
+                            if (newDoor.targetRoom === game.currentRoom - 1 ||
+                                (game.currentRoom === 0 && newDoor.targetRoom === 1)) {
+                                this.x = newDoor.x + (newDoor.x < newRoom.width / 2 ? 50 : -50);
+                                this.y = newDoor.y;
+                                break;
+                            }
+                        }
+                        this.updateUI();
+                        break;
+                    }
+                }
+            }
+
+            updateUI() {
+                document.getElementById('hp').textContent = '❤️'.repeat(this.hp);
+                document.getElementById('weaponName').textContent = this.currentWeapon.name;
+                const ammo = this.ammo[this.weapons[this.currentWeaponIndex]];
+                document.getElementById('ammo').textContent = ammo === Infinity ? '∞' : ammo;
+                document.getElementById('roomNum').textContent = game.currentRoom + 1;
+            }
+
+            draw(ctx) {
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.ellipse(this.x, this.y + 8, this.radius, this.radius * 0.5, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body
+                ctx.fillStyle = '#4a90d9';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Headband
+                ctx.fillStyle = '#e74c3c';
+                ctx.fillRect(this.x - this.radius, this.y - 4, this.radius * 2, 4);
+
+                // Gun with recoil
+                const gunLength = 18 - this.recoil;
+                const gunX = this.x + Math.cos(this.angle) * gunLength;
+                const gunY = this.y + Math.sin(this.angle) * gunLength;
+
+                ctx.strokeStyle = '#666';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(this.x + Math.cos(this.angle) * 8, this.y + Math.sin(this.angle) * 8);
+                ctx.lineTo(gunX, gunY);
+                ctx.stroke();
+
+                // Gun detail
+                ctx.strokeStyle = this.currentWeapon.color;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(this.x + Math.cos(this.angle) * 10, this.y + Math.sin(this.angle) * 10);
+                ctx.lineTo(gunX - 2, gunY - 2);
+                ctx.stroke();
+
+                // Muzzle flash
+                if (this.muzzleFlash > 0) {
+                    ctx.fillStyle = '#ffff00';
+                    ctx.globalAlpha = this.muzzleFlash / 5;
+                    ctx.beginPath();
+                    ctx.arc(gunX, gunY, 15, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+
+                // Eyes
+                const eyeOffset = Math.PI / 6;
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(
+                    this.x + Math.cos(this.angle + eyeOffset) * 5,
+                    this.y + Math.sin(this.angle + eyeOffset) * 5,
+                    3, 0, Math.PI * 2
+                );
+                ctx.arc(
+                    this.x + Math.cos(this.angle - eyeOffset) * 5,
+                    this.y + Math.sin(this.angle - eyeOffset) * 5,
+                    3, 0, Math.PI * 2
+                );
+                ctx.fill();
+
+                // Pupils
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(
+                    this.x + Math.cos(this.angle + eyeOffset) * 6,
+                    this.y + Math.sin(this.angle + eyeOffset) * 6,
+                    1.5, 0, Math.PI * 2
+                );
+                ctx.arc(
+                    this.x + Math.cos(this.angle - eyeOffset) * 6,
+                    this.y + Math.sin(this.angle - eyeOffset) * 6,
+                    1.5, 0, Math.PI * 2
+                );
+                ctx.fill();
+            }
+        }
+
+        // Room class
+        class Room {
+            constructor(width, height, type) {
+                this.width = width;
+                this.height = height;
+                this.type = type;
+                this.doors = [];
+                this.walls = [];
+                this.floorTiles = [];
+                this.generate();
+            }
+
+            generate() {
+                // Generate floor tiles
+                const tileSize = 40;
+                for (let x = 0; x < this.width; x += tileSize) {
+                    for (let y = 0; y < this.height; y += tileSize) {
+                        this.floorTiles.push({
+                            x, y,
+                            variant: Math.random() < 0.1 ? 1 : 0
+                        });
+                    }
+                }
+
+                // Generate walls (borders)
+                const wallThickness = 20;
+                // Top
+                this.walls.push({ x: 0, y: 0, width: this.width, height: wallThickness });
+                // Bottom
+                this.walls.push({ x: 0, y: this.height - wallThickness, width: this.width, height: wallThickness });
+                // Left
+                this.walls.push({ x: 0, y: 0, width: wallThickness, height: this.height });
+                // Right
+                this.walls.push({ x: this.width - wallThickness, y: 0, width: wallThickness, height: this.height });
+            }
+
+            addDoor(x, y, targetRoom) {
+                this.doors.push({ x, y, targetRoom });
+            }
+
+            draw(ctx) {
+                // Floor
+                ctx.fillStyle = '#2c3e50';
+                ctx.fillRect(0, 0, this.width, this.height);
+
+                // Floor tiles pattern
+                ctx.fillStyle = '#34495e';
+                for (const tile of this.floorTiles) {
+                    if (tile.variant === 1) {
+                        ctx.fillRect(tile.x + 2, tile.y + 2, 36, 36);
+                    }
+                }
+
+                // Grid lines
+                ctx.strokeStyle = 'rgba(52, 73, 94, 0.3)';
+                ctx.lineWidth = 1;
+                for (let x = 0; x < this.width; x += 40) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, this.height);
+                    ctx.stroke();
+                }
+                for (let y = 0; y < this.height; y += 40) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(this.width, y);
+                    ctx.stroke();
+                }
+
+                // Walls
+                ctx.fillStyle = '#1a252f';
+                for (const wall of this.walls) {
+                    ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
+                }
+
+                // Wall highlights
+                ctx.strokeStyle = '#34495e';
+                ctx.lineWidth = 2;
+                for (const wall of this.walls) {
+                    ctx.strokeRect(wall.x, wall.y, wall.width, wall.height);
+                }
+
+                // Doors
+                for (const door of this.doors) {
+                    // Door frame
+                    ctx.fillStyle = '#1a252f';
+                    ctx.fillRect(door.x - 25, door.y - 25, 50, 50);
+
+                    // Door opening
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(door.x - 15, door.y - 15, 30, 30);
+
+                    // Door glow
+                    const gradient = ctx.createRadialGradient(door.x, door.y, 0, door.x, door.y, 20);
+                    gradient.addColorStop(0, '#3498db');
+                    gradient.addColorStop(1, 'transparent');
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.arc(door.x, door.y, 20, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Arrow indicator
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '12px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('→', door.x, door.y + 4);
+                }
+            }
+        }
+
+        // Initialize game
+        function init() {
+            // Create rooms
+            const room1 = new Room(800, 600, 'start');
+            const room2 = new Room(800, 600, 'combat');
+            const room3 = new Room(800, 600, 'boss');
+
+            // Connect rooms with doors
+            room1.addDoor(780, 300, 1); // Door to room 2
+            room2.addDoor(20, 300, 0);  // Door back to room 1
+            room2.addDoor(780, 300, 2); // Door to room 3
+            room3.addDoor(20, 300, 1);  // Door back to room 2
+
+            game.rooms = [room1, room2, room3];
+
+            // Create player
+            game.player = new Player(100, 300);
+
+            // Place weapons in rooms
+            // Room 1: Shotgun
+            game.weapons.push(new WeaponPickup(400, 200, 'shotgun'));
+
+            // Room 2: Machinegun and Sniper
+            game.weapons.push(new WeaponPickup(300, 150, 'machinegun'));
+            game.weapons.push(new WeaponPickup(500, 450, 'sniper'));
+
+            // Room 3: Flamethrower and Laser
+            game.weapons.push(new WeaponPickup(400, 200, 'flamethrower'));
+            game.weapons.push(new WeaponPickup(600, 400, 'laser'));
+
+            game.player.updateUI();
+        }
+
+        // Input handling
+        window.addEventListener('keydown', (e) => {
+            game.keys[e.key] = true;
+
+            // Weapon switching with number keys
+            if (e.key >= '1' && e.key <= '6') {
+                const index = parseInt(e.key) - 1;
+                game.player.switchWeapon(index);
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            game.keys[e.key] = false;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            game.mouse.x = e.clientX;
+            game.mouse.y = e.clientY;
+        });
+
+        canvas.addEventListener('mousedown', () => {
+            game.mouse.down = true;
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            game.mouse.down = false;
+        });
+
+        // Game loop
+        function update() {
+            game.player.update();
+
+            // Update bullets
+            for (let i = game.bullets.length - 1; i >= 0; i--) {
+                const bullet = game.bullets[i];
+                bullet.update();
+
+                // Remove dead bullets
+                if (bullet.life <= 0 ||
+                    bullet.x < 0 || bullet.x > game.rooms[game.currentRoom].width ||
+                    bullet.y < 0 || bullet.y > game.rooms[game.currentRoom].height) {
+                    game.bullets.splice(i, 1);
+                }
+            }
+
+            // Update particles
+            for (let i = game.particles.length - 1; i >= 0; i--) {
+                const particle = game.particles[i];
+                particle.update();
+                if (particle.life <= 0) {
+                    game.particles.splice(i, 1);
+                }
+            }
+
+            // Update weapons
+            for (const weapon of game.weapons) {
+                weapon.update();
+            }
+        }
+
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw current room
+            game.rooms[game.currentRoom].draw(ctx);
+
+            // Draw weapons in current room
+            for (const weapon of game.weapons) {
+                weapon.draw(ctx);
+            }
+
+            // Draw particles (behind player)
+            for (const particle of game.particles) {
+                particle.draw(ctx);
+            }
+
+            // Draw bullets
+            for (const bullet of game.bullets) {
+                bullet.draw(ctx);
+            }
+
+            // Draw player
+            game.player.draw(ctx);
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start game
+        init();
+        gameLoop();
+    </script>
+</body>
+</html>
