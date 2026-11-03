@@ -54,6 +54,14 @@
             font-size: 16px;
             text-shadow: 2px 2px 0 #000;
         }
+        #score {
+            position: absolute;
+            top: 35px;
+            right: 10px;
+            color: #ffd700;
+            font-size: 14px;
+            text-shadow: 2px 2px 0 #000;
+        }
     </style>
 </head>
 <body>
@@ -71,6 +79,7 @@
             </div>
         </div>
         <div id="roomIndicator">房间: <span id="roomNum">1</span>/3</div>
+        <div id="score">击杀: <span id="killCount">0</span></div>
     </div>
 
     <script>
@@ -85,11 +94,11 @@
             player: null,
             bullets: [],
             particles: [],
-            weapons: [],
             enemies: [],
             camera: { x: 0, y: 0 },
             keys: {},
-            mouse: { x: 0, y: 0, down: false }
+            mouse: { x: 0, y: 0, down: false },
+            killCount: 0
         };
 
         // Weapon definitions - 6 different weapons
@@ -201,17 +210,18 @@
 
         // Bullet class
         class Bullet {
-            constructor(x, y, angle, weapon) {
+            constructor(x, y, angle, weapon, isEnemy = false) {
                 this.x = x;
                 this.y = y;
                 this.angle = angle;
                 this.speed = weapon.bulletSpeed;
                 this.damage = weapon.damage;
                 this.size = weapon.bulletSize;
-                this.color = weapon.color;
+                this.color = isEnemy ? '#ff0000' : weapon.color;
                 this.effect = weapon.effect;
                 this.life = 100;
                 this.trail = [];
+                this.isEnemy = isEnemy;
             }
 
             update() {
@@ -285,6 +295,7 @@
                 this.weapon = WEAPONS[weaponKey];
                 this.bobOffset = 0;
                 this.glowPhase = 0;
+                this.pickedUp = false;
             }
 
             update() {
@@ -293,6 +304,7 @@
             }
 
             draw(ctx) {
+                if (this.pickedUp) return;
                 const glowSize = 15 + Math.sin(this.glowPhase) * 5;
 
                 // Glow effect
@@ -321,6 +333,142 @@
             }
         }
 
+        // Enemy class
+        class Enemy {
+            constructor(x, y, type) {
+                this.x = x;
+                this.y = y;
+                this.type = type;
+                this.radius = 14;
+                this.hp = type === 'boss' ? 100 : (type === 'tank' ? 30 : 15);
+                this.maxHp = this.hp;
+                this.speed = type === 'fast' ? 2.5 : (type === 'boss' ? 1.5 : 1.2);
+                this.angle = 0;
+                this.lastShot = 0;
+                this.fireRate = type === 'boss' ? 800 : 1500;
+                this.damage = type === 'boss' ? 2 : 1;
+                this.hitFlash = 0;
+                this.dead = false;
+            }
+
+            update() {
+                if (this.dead) return;
+
+                // Move towards player
+                const dx = game.player.x - this.x;
+                const dy = game.player.y - this.y;
+                const dist = Math.hypot(dx, dy);
+                this.angle = Math.atan2(dy, dx);
+
+                // Keep some distance
+                const targetDist = this.type === 'boss' ? 150 : 100;
+                if (dist > targetDist) {
+                    this.x += (dx / dist) * this.speed;
+                    this.y += (dy / dist) * this.speed;
+                } else if (dist < 50) {
+                    // Too close, back away
+                    this.x -= (dx / dist) * this.speed;
+                    this.y -= (dy / dist) * this.speed;
+                }
+
+                // Clamp to room bounds
+                const room = game.rooms[game.currentRoom];
+                this.x = Math.max(this.radius, Math.min(room.width - this.radius, this.x));
+                this.y = Math.max(this.radius, Math.min(room.height - this.radius, this.y));
+
+                // Shoot at player
+                if (Date.now() - this.lastShot > this.fireRate && dist < 400) {
+                    this.shoot();
+                }
+
+                if (this.hitFlash > 0) this.hitFlash--;
+            }
+
+            shoot() {
+                this.lastShot = Date.now();
+                const bullet = new Bullet(
+                    this.x + Math.cos(this.angle) * 20,
+                    this.y + Math.sin(this.angle) * 20,
+                    this.angle,
+                    { bulletSpeed: 5, damage: this.damage, bulletSize: 4, color: '#ff0000', effect: 'normal' },
+                    true
+                );
+                game.bullets.push(bullet);
+            }
+
+            takeDamage(damage) {
+                this.hp -= damage;
+                this.hitFlash = 5;
+                if (this.hp <= 0) {
+                    this.dead = true;
+                    game.killCount++;
+                    document.getElementById('killCount').textContent = game.killCount;
+                    // Death particles
+                    for (let i = 0; i < 10; i++) {
+                        game.particles.push(new Particle(
+                            this.x, this.y,
+                            this.type === 'boss' ? '#ff00ff' : '#ff0000',
+                            5, 6, 30
+                        ));
+                    }
+                }
+            }
+
+            draw(ctx) {
+                if (this.dead) return;
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.ellipse(this.x, this.y + 8, this.radius, this.radius * 0.5, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body
+                if (this.hitFlash > 0) {
+                    ctx.fillStyle = '#fff';
+                } else {
+                    switch (this.type) {
+                        case 'fast': ctx.fillStyle = '#e74c3c'; break;
+                        case 'tank': ctx.fillStyle = '#8e44ad'; break;
+                        case 'boss': ctx.fillStyle = '#c0392b'; break;
+                        default: ctx.fillStyle = '#e74c3c';
+                    }
+                }
+
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Enemy detail
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius - 3, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Eyes (angry)
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(this.x - 5, this.y - 3, 3, 0, Math.PI * 2);
+                ctx.arc(this.x + 5, this.y - 3, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(this.x - 5, this.y - 3, 1.5, 0, Math.PI * 2);
+                ctx.arc(this.x + 5, this.y - 3, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Health bar
+                const barWidth = 30;
+                const barHeight = 4;
+                ctx.fillStyle = '#000';
+                ctx.fillRect(this.x - barWidth/2, this.y - this.radius - 10, barWidth, barHeight);
+                ctx.fillStyle = '#2ecc71';
+                ctx.fillRect(this.x - barWidth/2, this.y - this.radius - 10, barWidth * (this.hp / this.maxHp), barHeight);
+            }
+        }
+
         // Player class
         class Player {
             constructor(x, y) {
@@ -337,6 +485,7 @@
                 this.lastShot = 0;
                 this.recoil = 0;
                 this.muzzleFlash = 0;
+                this.invulnerable = 0;
             }
 
             get currentWeapon() {
@@ -380,19 +529,65 @@
                 // Recoil recovery
                 if (this.recoil > 0) this.recoil *= 0.9;
                 if (this.muzzleFlash > 0) this.muzzleFlash--;
+                if (this.invulnerable > 0) this.invulnerable--;
 
-                // Check weapon pickup
-                for (let i = game.weapons.length - 1; i >= 0; i--) {
-                    const pickup = game.weapons[i];
+                // Check weapon pickup in current room only
+                const currentRoomData = game.rooms[game.currentRoom];
+                for (let i = currentRoomData.weapons.length - 1; i >= 0; i--) {
+                    const pickup = currentRoomData.weapons[i];
+                    if (pickup.pickedUp) continue;
                     const dist = Math.hypot(this.x - pickup.x, this.y - pickup.y);
                     if (dist < this.radius + 20) {
                         this.pickupWeapon(pickup.weaponKey);
-                        game.weapons.splice(i, 1);
+                        pickup.pickedUp = true;
+                    }
+                }
+
+                // Check enemy bullet collision
+                for (let i = game.bullets.length - 1; i >= 0; i--) {
+                    const bullet = game.bullets[i];
+                    if (bullet.isEnemy) {
+                        const dist = Math.hypot(this.x - bullet.x, this.y - bullet.y);
+                        if (dist < this.radius + bullet.size && this.invulnerable === 0) {
+                            this.takeDamage(1);
+                            game.bullets.splice(i, 1);
+                        }
+                    }
+                }
+
+                // Check enemy collision
+                for (const enemy of game.enemies) {
+                    if (enemy.dead) continue;
+                    const dist = Math.hypot(this.x - enemy.x, this.y - enemy.y);
+                    if (dist < this.radius + enemy.radius && this.invulnerable === 0) {
+                        this.takeDamage(enemy.damage);
                     }
                 }
 
                 // Room transition
                 this.checkRoomTransition();
+            }
+
+            takeDamage(damage) {
+                this.hp -= damage;
+                this.invulnerable = 60; // 1 second at 60fps
+                document.getElementById('hp').textContent = '❤️'.repeat(Math.max(0, this.hp));
+
+                // Damage particles
+                for (let i = 0; i < 5; i++) {
+                    game.particles.push(new Particle(
+                        this.x, this.y, '#ff0000', 5, 4, 20
+                    ));
+                }
+
+                if (this.hp <= 0) {
+                    // Respawn
+                    this.hp = this.maxHp;
+                    this.x = 100;
+                    this.y = 300;
+                    game.currentRoom = 0;
+                    document.getElementById('hp').textContent = '❤️'.repeat(this.hp);
+                }
             }
 
             shoot() {
@@ -476,25 +671,59 @@
                 for (const door of room.doors) {
                     const dist = Math.hypot(this.x - door.x, this.y - door.y);
                     if (dist < 30) {
+                        const oldRoom = game.currentRoom;
                         game.currentRoom = door.targetRoom;
+
                         // Position player at opposite door
                         const newRoom = game.rooms[door.targetRoom];
                         for (const newDoor of newRoom.doors) {
-                            if (newDoor.targetRoom === game.currentRoom - 1 ||
-                                (game.currentRoom === 0 && newDoor.targetRoom === 1)) {
+                            if (newDoor.targetRoom === oldRoom) {
                                 this.x = newDoor.x + (newDoor.x < newRoom.width / 2 ? 50 : -50);
                                 this.y = newDoor.y;
                                 break;
                             }
                         }
+
+                        // Clear bullets when changing rooms
+                        game.bullets = [];
+
+                        // Spawn enemies for new room if not already spawned
+                        this.spawnRoomEnemies(game.currentRoom);
+
                         this.updateUI();
                         break;
                     }
                 }
             }
 
+            spawnRoomEnemies(roomIndex) {
+                // Clear existing enemies
+                game.enemies = [];
+
+                const room = game.rooms[roomIndex];
+                if (room.enemiesSpawned) return;
+                room.enemiesSpawned = true;
+
+                // Spawn enemies based on room
+                if (roomIndex === 0) {
+                    // Room 1: 2 basic enemies
+                    game.enemies.push(new Enemy(600, 200, 'basic'));
+                    game.enemies.push(new Enemy(600, 400, 'basic'));
+                } else if (roomIndex === 1) {
+                    // Room 2: Mix of enemies
+                    game.enemies.push(new Enemy(500, 150, 'fast'));
+                    game.enemies.push(new Enemy(700, 300, 'tank'));
+                    game.enemies.push(new Enemy(500, 450, 'basic'));
+                } else if (roomIndex === 2) {
+                    // Room 3: Boss + minions
+                    game.enemies.push(new Enemy(600, 300, 'boss'));
+                    game.enemies.push(new Enemy(500, 200, 'basic'));
+                    game.enemies.push(new Enemy(500, 400, 'basic'));
+                }
+            }
+
             updateUI() {
-                document.getElementById('hp').textContent = '❤️'.repeat(this.hp);
+                document.getElementById('hp').textContent = '❤️'.repeat(Math.max(0, this.hp));
                 document.getElementById('weaponName').textContent = this.currentWeapon.name;
                 const ammo = this.ammo[this.weapons[this.currentWeaponIndex]];
                 document.getElementById('ammo').textContent = ammo === Infinity ? '∞' : ammo;
@@ -502,6 +731,11 @@
             }
 
             draw(ctx) {
+                // Invulnerability flash
+                if (this.invulnerable > 0 && Math.floor(this.invulnerable / 5) % 2 === 0) {
+                    ctx.globalAlpha = 0.5;
+                }
+
                 // Shadow
                 ctx.fillStyle = 'rgba(0,0,0,0.3)';
                 ctx.beginPath();
@@ -545,7 +779,7 @@
                     ctx.beginPath();
                     ctx.arc(gunX, gunY, 15, 0, Math.PI * 2);
                     ctx.fill();
-                    ctx.globalAlpha = 1;
+                    ctx.globalAlpha = this.invulnerable > 0 ? 0.5 : 1;
                 }
 
                 // Eyes
@@ -578,18 +812,23 @@
                     1.5, 0, Math.PI * 2
                 );
                 ctx.fill();
+
+                ctx.globalAlpha = 1;
             }
         }
 
         // Room class
         class Room {
-            constructor(width, height, type) {
+            constructor(width, height, type, roomIndex) {
                 this.width = width;
                 this.height = height;
                 this.type = type;
+                this.roomIndex = roomIndex;
                 this.doors = [];
                 this.walls = [];
                 this.floorTiles = [];
+                this.weapons = []; // Weapons specific to this room
+                this.enemiesSpawned = false;
                 this.generate();
             }
 
@@ -619,6 +858,10 @@
 
             addDoor(x, y, targetRoom) {
                 this.doors.push({ x, y, targetRoom });
+            }
+
+            addWeapon(x, y, weaponKey) {
+                this.weapons.push(new WeaponPickup(x, y, weaponKey));
             }
 
             draw(ctx) {
@@ -688,15 +931,22 @@
                     ctx.textAlign = 'center';
                     ctx.fillText('→', door.x, door.y + 4);
                 }
+
+                // Draw weapons for this room
+                for (const weapon of this.weapons) {
+                    if (!weapon.pickedUp) {
+                        weapon.draw(ctx);
+                    }
+                }
             }
         }
 
         // Initialize game
         function init() {
-            // Create rooms
-            const room1 = new Room(800, 600, 'start');
-            const room2 = new Room(800, 600, 'combat');
-            const room3 = new Room(800, 600, 'boss');
+            // Create rooms with indices
+            const room1 = new Room(800, 600, 'start', 0);
+            const room2 = new Room(800, 600, 'combat', 1);
+            const room3 = new Room(800, 600, 'boss', 2);
 
             // Connect rooms with doors
             room1.addDoor(780, 300, 1); // Door to room 2
@@ -709,17 +959,21 @@
             // Create player
             game.player = new Player(100, 300);
 
-            // Place weapons in rooms
-            // Room 1: Shotgun
-            game.weapons.push(new WeaponPickup(400, 200, 'shotgun'));
+            // Place weapons in rooms - 2 weapons per room
+            // Room 1: Shotgun and Machinegun
+            room1.addWeapon(400, 200, 'shotgun');
+            room1.addWeapon(400, 400, 'machinegun');
 
-            // Room 2: Machinegun and Sniper
-            game.weapons.push(new WeaponPickup(300, 150, 'machinegun'));
-            game.weapons.push(new WeaponPickup(500, 450, 'sniper'));
+            // Room 2: Sniper and Flamethrower
+            room2.addWeapon(400, 150, 'sniper');
+            room2.addWeapon(400, 450, 'flamethrower');
 
-            // Room 3: Flamethrower and Laser
-            game.weapons.push(new WeaponPickup(400, 200, 'flamethrower'));
-            game.weapons.push(new WeaponPickup(600, 400, 'laser'));
+            // Room 3: Laser (and one extra - let's put shotgun ammo or another weapon)
+            room3.addWeapon(300, 300, 'laser');
+            room3.addWeapon(500, 300, 'shotgun'); // Extra ammo pickup
+
+            // Spawn initial room enemies
+            game.player.spawnRoomEnemies(0);
 
             game.player.updateUI();
         }
@@ -757,10 +1011,33 @@
         function update() {
             game.player.update();
 
+            // Update enemies
+            for (let i = game.enemies.length - 1; i >= 0; i--) {
+                const enemy = game.enemies[i];
+                enemy.update();
+
+                if (enemy.dead) {
+                    game.enemies.splice(i, 1);
+                }
+            }
+
             // Update bullets
             for (let i = game.bullets.length - 1; i >= 0; i--) {
                 const bullet = game.bullets[i];
                 bullet.update();
+
+                // Check bullet-enemy collision (player bullets)
+                if (!bullet.isEnemy) {
+                    for (const enemy of game.enemies) {
+                        if (enemy.dead) continue;
+                        const dist = Math.hypot(bullet.x - enemy.x, bullet.y - enemy.y);
+                        if (dist < enemy.radius + bullet.size) {
+                            enemy.takeDamage(bullet.damage);
+                            bullet.life = 0;
+                            break;
+                        }
+                    }
+                }
 
                 // Remove dead bullets
                 if (bullet.life <= 0 ||
@@ -779,8 +1056,9 @@
                 }
             }
 
-            // Update weapons
-            for (const weapon of game.weapons) {
+            // Update weapons in current room
+            const currentRoom = game.rooms[game.currentRoom];
+            for (const weapon of currentRoom.weapons) {
                 weapon.update();
             }
         }
@@ -793,12 +1071,7 @@
             // Draw current room
             game.rooms[game.currentRoom].draw(ctx);
 
-            // Draw weapons in current room
-            for (const weapon of game.weapons) {
-                weapon.draw(ctx);
-            }
-
-            // Draw particles (behind player)
+            // Draw particles (behind player and enemies)
             for (const particle of game.particles) {
                 particle.draw(ctx);
             }
@@ -806,6 +1079,11 @@
             // Draw bullets
             for (const bullet of game.bullets) {
                 bullet.draw(ctx);
+            }
+
+            // Draw enemies
+            for (const enemy of game.enemies) {
+                enemy.draw(ctx);
             }
 
             // Draw player
