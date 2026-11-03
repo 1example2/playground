@@ -483,7 +483,13 @@
             spawnEnemies() {
                 if (this.enemiesSpawned) return;
                 this.enemiesSpawned = true;
-                const enemyCount = this.type === 'boss' ? 4 : this.type === 'combat' ? randInt(2, 5) : randInt(0, 2);
+                // Ensure every room has at least 1 enemy (except start room which gets 2)
+                let enemyCount;
+                if (this.type === 'start') enemyCount = 2;
+                else if (this.type === 'boss') enemyCount = 4;
+                else if (this.type === 'combat') enemyCount = randInt(3, 6);
+                else enemyCount = randInt(2, 4); // normal rooms get 2-3 enemies
+
                 for (let i = 0; i < enemyCount; i++) {
                     const type = this.type === 'boss' && i === 0 ? 'boss' : randChoice(['basic', 'fast', 'tank', 'basic']);
                     const ex = randInt(200, this.width - 200);
@@ -617,18 +623,29 @@
             const weaponKeys = Object.keys(WEAPONS).filter(k => k !== 'pistol');
             let weaponIndex = 0;
 
-            // Distribute weapons across rooms
+            // First pass: ensure every non-start room has at least one item
             for (const room of game.rooms) {
                 if (room.type === 'start') continue;
+                // Every room gets at least one weapon or ammo
                 if (weaponIndex < weaponKeys.length) {
                     const wx = randInt(150, room.width - 150);
                     const wy = randInt(150, room.height - 150);
                     room.addWeapon(wx, wy, weaponKeys[weaponIndex]);
                     weaponIndex++;
+                } else {
+                    // If all weapons placed, add ammo pickup
+                    const ammoWeapon = randChoice(weaponKeys);
+                    const wx = randInt(150, room.width - 150);
+                    const wy = randInt(150, room.height - 150);
+                    room.addWeapon(wx, wy, ammoWeapon);
                 }
-                // Add ammo pickups in some rooms
-                if (Math.random() < 0.3 && weaponIndex > 0) {
-                    const ammoWeapon = randChoice(weaponKeys.slice(0, weaponIndex));
+            }
+
+            // Second pass: add extra ammo pickups in some rooms
+            for (const room of game.rooms) {
+                if (room.type === 'start') continue;
+                if (Math.random() < 0.4) {
+                    const ammoWeapon = randChoice(weaponKeys);
                     const wx = randInt(150, room.width - 150);
                     const wy = randInt(150, room.height - 150);
                     room.addWeapon(wx, wy, ammoWeapon);
@@ -830,7 +847,8 @@
                 const oldRoom = game.currentRoom;
                 for (const door of oldRoom.doors) {
                     const dist = Math.hypot(this.x - door.x, this.y - door.y);
-                    if (dist < 30) {
+                    // Smaller trigger area (15 instead of 30) and require key press or click
+                    if (dist < 15) {
                         const targetRoom = door.targetRoom;
                         game.currentRoom = targetRoom;
                         game.currentRoomCoords = { x: targetRoom.gridX, y: targetRoom.gridY };
