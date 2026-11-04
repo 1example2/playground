@@ -1,4 +1,4 @@
 # playground
 ai playground
 
-> **Note:** This is a test repository.
+> **Note:** This is a personal test repository.
